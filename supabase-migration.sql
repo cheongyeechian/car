@@ -18,11 +18,26 @@ CREATE TABLE IF NOT EXISTS car_listings (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Track imported files to prevent duplicate imports
+CREATE TABLE IF NOT EXISTS import_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  file_hash TEXT NOT NULL UNIQUE,
+  file_name TEXT,
+  item_count INTEGER,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Enable Row Level Security (optional but recommended)
 ALTER TABLE car_listings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE import_logs ENABLE ROW LEVEL SECURITY;
 
 -- Allow all operations for anonymous users (adjust as needed)
 CREATE POLICY "Allow all operations" ON car_listings
+  FOR ALL
+  USING (true)
+  WITH CHECK (true);
+
+CREATE POLICY "Allow all operations" ON import_logs
   FOR ALL
   USING (true)
   WITH CHECK (true);

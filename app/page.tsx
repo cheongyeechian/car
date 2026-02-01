@@ -13,6 +13,7 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Filters
+  const [listingIdFilter, setListingIdFilter] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
   const [modelFilter, setModelFilter] = useState("");
   const [yearMin, setYearMin] = useState("");
@@ -20,6 +21,16 @@ export default function Home() {
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
   const [importDateFilter, setImportDateFilter] = useState("");
+  const [bidFilter, setBidFilter] = useState<"" | "bid" | "nobid">("");
+
+  // Total counts
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalBidCount, setTotalBidCount] = useState(0);
+  const [totalNoBidCount, setTotalNoBidCount] = useState(0);
+
+  // Sort
+  const [sortColumn, setSortColumn] = useState<"import_date" | "import_time" | "">("");
+  const [sortAsc, setSortAsc] = useState(true);
 
   // Pagination
   const [page, setPage] = useState(0);
@@ -62,23 +73,72 @@ export default function Home() {
     }
   }, []);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const buildFilteredQuery = useCallback(
+    <T extends { eq: any; gte: any; lte: any }>(base: T): T => {
+      let query = base;
+      if (listingIdFilter) query = query.eq("listing_id", listingIdFilter);
+      if (brandFilter) query = query.eq("brand", brandFilter);
+      if (modelFilter) query = query.eq("model", modelFilter);
+      if (yearMin) query = query.gte("year", parseInt(yearMin));
+      if (yearMax) query = query.lte("year", parseInt(yearMax));
+      if (priceMin) query = query.gte("price", parseInt(priceMin));
+      if (priceMax) query = query.lte("price", parseInt(priceMax));
+      if (importDateFilter) query = query.eq("import_date", importDateFilter);
+      return query;
+    },
+    [listingIdFilter, brandFilter, modelFilter, yearMin, yearMax, priceMin, priceMax, importDateFilter]
+  );
+
+  const fetchCounts = useCallback(async () => {
+    // Total count with current filters (excluding bid filter)
+    const { count: total } = await buildFilteredQuery(
+      supabase.from("car_listings").select("*", { count: "exact", head: true })
+    );
+    setTotalCount(total || 0);
+
+    // Bid count
+    const { count: bidC } = await buildFilteredQuery(
+      supabase.from("car_listings").select("*", { count: "exact", head: true })
+    ).eq("has_bid", true);
+    setTotalBidCount(bidC || 0);
+
+    // No bid count
+    const { count: noBidC } = await buildFilteredQuery(
+      supabase.from("car_listings").select("*", { count: "exact", head: true })
+    ).eq("has_bid", false);
+    setTotalNoBidCount(noBidC || 0);
+  }, [buildFilteredQuery]);
+
+  const handleSort = (column: "import_date" | "import_time") => {
+    if (sortColumn === column) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortColumn(column);
+      setSortAsc(true);
+    }
+    setPage(0);
+  };
+
   const fetchListings = useCallback(async () => {
     setLoading(true);
-    let query = supabase
-      .from("car_listings")
-      .select("*")
-      .order("brand")
-      .order("model")
-      .order("year", { ascending: false })
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    let query = buildFilteredQuery(
+      supabase.from("car_listings").select("*")
+    ).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-    if (brandFilter) query = query.eq("brand", brandFilter);
-    if (modelFilter) query = query.eq("model", modelFilter);
-    if (yearMin) query = query.gte("year", parseInt(yearMin));
-    if (yearMax) query = query.lte("year", parseInt(yearMax));
-    if (priceMin) query = query.gte("price", parseInt(priceMin));
-    if (priceMax) query = query.lte("price", parseInt(priceMax));
-    if (importDateFilter) query = query.eq("import_date", importDateFilter);
+    // Apply bid filter
+    if (bidFilter === "bid") query = query.eq("has_bid", true);
+    if (bidFilter === "nobid") query = query.eq("has_bid", false);
+
+    // Apply sort
+    if (sortColumn) {
+      query = query.order(sortColumn, { ascending: sortAsc });
+      if (sortColumn === "import_date") {
+        query = query.order("import_time", { ascending: sortAsc });
+      }
+    } else {
+      query = query.order("brand").order("model").order("year", { ascending: false });
+    }
 
     const { data, error } = await query;
     if (error) {
@@ -89,13 +149,10 @@ export default function Home() {
     setLoading(false);
   }, [
     page,
-    brandFilter,
-    modelFilter,
-    yearMin,
-    yearMax,
-    priceMin,
-    priceMax,
-    importDateFilter,
+    sortColumn,
+    sortAsc,
+    bidFilter,
+    buildFilteredQuery,
   ]);
 
   useEffect(() => {
@@ -109,6 +166,10 @@ export default function Home() {
   useEffect(() => {
     fetchListings();
   }, [fetchListings]);
+
+  useEffect(() => {
+    fetchCounts();
+  }, [fetchCounts]);
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -127,33 +188,31 @@ export default function Home() {
         return;
       }
 
-      setMessage(`Found ${parsed.length} items. Checking for duplicates...`);
+      // Duplicate file detection: hash the file content and check if already imported
+      const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const fileHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 
-      // Check which listing_ids already exist
-      const newListingIds = parsed.map((l) => l.listing_id);
-      const { data: existing } = await supabase
-        .from("car_listings")
-        .select("listing_id")
-        .in("listing_id", newListingIds);
+      const { data: existingHash } = await supabase
+        .from("import_logs")
+        .select("id")
+        .eq("file_hash", fileHash)
+        .limit(1);
 
-      const existingIds = new Set(existing?.map((r) => r.listing_id) || []);
-      const newItems = parsed.filter((l) => !existingIds.has(l.listing_id));
-      const skipped = parsed.length - newItems.length;
-
-      if (newItems.length === 0) {
-        setMessage(`All ${parsed.length} items already exist. Nothing to import.`);
+      if (existingHash && existingHash.length > 0) {
+        setMessage("This exact file has already been imported. Import cancelled.");
         setImporting(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
 
-      setMessage(`Uploading ${newItems.length} new items (${skipped} duplicates skipped)...`);
+      setMessage(`Uploading ${parsed.length} items...`);
 
       // Insert in batches of 100
       const batchSize = 100;
       let inserted = 0;
-      for (let i = 0; i < newItems.length; i += batchSize) {
-        const batch = newItems.slice(i, i + batchSize);
+      for (let i = 0; i < parsed.length; i += batchSize) {
+        const batch = parsed.slice(i, i + batchSize);
         const { error } = await supabase.from("car_listings").insert(batch);
         if (error) {
           setMessage(`Error inserting batch: ${error.message}`);
@@ -163,9 +222,17 @@ export default function Home() {
         inserted += batch.length;
       }
 
-      setMessage(`Imported ${inserted} new items. ${skipped > 0 ? `${skipped} duplicates skipped.` : ""}`);
+      // Save file hash to prevent re-import
+      await supabase.from("import_logs").insert({
+        file_hash: fileHash,
+        file_name: file.name,
+        item_count: inserted,
+      });
+
+      setMessage(`Successfully imported ${inserted} items.`);
       fetchListings();
       fetchDropdownValues();
+      fetchCounts();
     } catch (err) {
       setMessage(`Error parsing file: ${err instanceof Error ? err.message : err}`);
     }
@@ -179,20 +246,15 @@ export default function Home() {
     setMessage("Fetching all filtered data for export...");
 
     // Fetch ALL matching records (no pagination)
-    let query = supabase
-      .from("car_listings")
-      .select("*")
+    let query = buildFilteredQuery(
+      supabase.from("car_listings").select("*")
+    )
       .order("brand")
       .order("model")
       .order("year", { ascending: false });
 
-    if (brandFilter) query = query.eq("brand", brandFilter);
-    if (modelFilter) query = query.eq("model", modelFilter);
-    if (yearMin) query = query.gte("year", parseInt(yearMin));
-    if (yearMax) query = query.lte("year", parseInt(yearMax));
-    if (priceMin) query = query.gte("price", parseInt(priceMin));
-    if (priceMax) query = query.lte("price", parseInt(priceMax));
-    if (importDateFilter) query = query.eq("import_date", importDateFilter);
+    if (bidFilter === "bid") query = query.eq("has_bid", true);
+    if (bidFilter === "nobid") query = query.eq("has_bid", false);
 
     const { data, error } = await query;
     if (error) {
@@ -219,6 +281,7 @@ export default function Home() {
   };
 
   const clearFilters = () => {
+    setListingIdFilter("");
     setBrandFilter("");
     setModelFilter("");
     setYearMin("");
@@ -226,11 +289,11 @@ export default function Home() {
     setPriceMin("");
     setPriceMax("");
     setImportDateFilter("");
+    setBidFilter("");
+    setSortColumn("");
+    setSortAsc(true);
     setPage(0);
   };
-
-  const bidCount = listings.filter((l) => l.has_bid).length;
-  const noBidCount = listings.filter((l) => !l.has_bid).length;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -281,7 +344,24 @@ export default function Home() {
               Clear all
             </button>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+            {/* Listing ID */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">
+                Listing ID
+              </label>
+              <input
+                type="text"
+                value={listingIdFilter}
+                onChange={(e) => {
+                  setListingIdFilter(e.target.value);
+                  setPage(0);
+                }}
+                placeholder="e.g. 2098229"
+                className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+              />
+            </div>
+
             {/* Brand */}
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">
@@ -415,17 +495,38 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Summary */}
+        {/* Summary - clickable labels */}
         <div className="flex gap-4 mb-4 text-sm">
-          <span className="px-3 py-1 bg-white rounded-full border border-gray-200 text-gray-600">
-            Showing: <strong>{listings.length}</strong> items
-          </span>
-          <span className="px-3 py-1 bg-green-50 rounded-full border border-green-200 text-green-700">
-            With Bid: <strong>{bidCount}</strong>
-          </span>
-          <span className="px-3 py-1 bg-red-50 rounded-full border border-red-200 text-red-700">
-            No Bid: <strong>{noBidCount}</strong>
-          </span>
+          <button
+            onClick={() => { setBidFilter(""); setPage(0); }}
+            className={`px-3 py-1 rounded-full border transition cursor-pointer ${
+              bidFilter === ""
+                ? "bg-blue-100 border-blue-400 text-blue-800 font-semibold"
+                : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+            }`}
+          >
+            Total: <strong>{totalCount}</strong>
+          </button>
+          <button
+            onClick={() => { setBidFilter("bid"); setPage(0); }}
+            className={`px-3 py-1 rounded-full border transition cursor-pointer ${
+              bidFilter === "bid"
+                ? "bg-green-200 border-green-500 text-green-900 font-semibold"
+                : "bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
+            }`}
+          >
+            With Bid: <strong>{totalBidCount}</strong>
+          </button>
+          <button
+            onClick={() => { setBidFilter("nobid"); setPage(0); }}
+            className={`px-3 py-1 rounded-full border transition cursor-pointer ${
+              bidFilter === "nobid"
+                ? "bg-red-200 border-red-500 text-red-900 font-semibold"
+                : "bg-red-50 border-red-200 text-red-700 hover:bg-red-100"
+            }`}
+          >
+            No Bid: <strong>{totalNoBidCount}</strong>
+          </button>
         </div>
 
         {/* Table */}
@@ -434,11 +535,17 @@ export default function Home() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="px-3 py-2 text-left font-medium text-gray-600">
-                    Import Date
+                  <th
+                    className="px-3 py-2 text-left font-medium text-gray-600 cursor-pointer hover:text-gray-900 select-none"
+                    onClick={() => handleSort("import_date")}
+                  >
+                    Import Date {sortColumn === "import_date" ? (sortAsc ? "▲" : "▼") : ""}
                   </th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600">
-                    Time
+                  <th
+                    className="px-3 py-2 text-left font-medium text-gray-600 cursor-pointer hover:text-gray-900 select-none"
+                    onClick={() => handleSort("import_time")}
+                  >
+                    Time {sortColumn === "import_time" ? (sortAsc ? "▲" : "▼") : ""}
                   </th>
                   <th className="px-3 py-2 text-left font-medium text-gray-600">
                     Listing ID
