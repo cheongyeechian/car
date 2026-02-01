@@ -36,7 +36,7 @@ export default function Home() {
   } | null>(null);
 
   // Sort
-  const [sortColumn, setSortColumn] = useState<"import_date" | "import_time" | "">("");
+  const [sortColumn, setSortColumn] = useState<"import_date" | "import_time" | "year" | "">("");
   const [sortAsc, setSortAsc] = useState(true);
 
   // Pagination
@@ -126,7 +126,7 @@ export default function Home() {
     setTotalNoBidCount(noBidC || 0);
   }, [buildFilteredQuery]);
 
-  const handleSort = (column: "import_date" | "import_time") => {
+  const handleSort = (column: "import_date" | "import_time" | "year") => {
     if (sortColumn === column) {
       setSortAsc(!sortAsc);
     } else {
@@ -623,8 +623,11 @@ export default function Home() {
                   <th className="px-3 py-2 text-left font-medium text-gray-600">
                     Variant
                   </th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-600">
-                    Year
+                  <th
+                    className="px-3 py-2 text-right font-medium text-gray-600 cursor-pointer hover:text-gray-900 select-none"
+                    onClick={() => handleSort("year")}
+                  >
+                    Year {sortColumn === "year" ? (sortAsc ? "▲" : "▼") : ""}
                   </th>
                   <th className="px-3 py-2 text-right font-medium text-gray-600">
                     Price (RM)
