@@ -28,6 +28,14 @@ export default function Home() {
   const [totalBidCount, setTotalBidCount] = useState(0);
   const [totalNoBidCount, setTotalNoBidCount] = useState(0);
 
+  // Import confirmation
+  const [confirmImport, setConfirmImport] = useState<{
+    file: File;
+    buffer: ArrayBuffer;
+    parsed: CarListing[];
+    fileHash: string;
+  } | null>(null);
+
   // Sort
   const [sortColumn, setSortColumn] = useState<"import_date" | "import_time" | "">("");
   const [sortAsc, setSortAsc] = useState(true);
@@ -171,11 +179,10 @@ export default function Home() {
     fetchCounts();
   }, [fetchCounts]);
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setImporting(true);
     setMessage("Parsing file...");
 
     try {
@@ -184,11 +191,11 @@ export default function Home() {
 
       if (parsed.length === 0) {
         setMessage("No items found in file. Make sure the file has 'Ended' rows.");
-        setImporting(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
 
-      // Duplicate file detection: hash the file content and check if already imported
+      // Duplicate file detection
       const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       const fileHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -201,14 +208,26 @@ export default function Home() {
 
       if (existingHash && existingHash.length > 0) {
         setMessage("This exact file has already been imported. Import cancelled.");
-        setImporting(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
 
-      setMessage(`Uploading ${parsed.length} items...`);
+      setMessage("");
+      setConfirmImport({ file, buffer, parsed, fileHash });
+    } catch (err) {
+      setMessage(`Error parsing file: ${err instanceof Error ? err.message : err}`);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
-      // Insert in batches of 100
+  const handleConfirmImport = async () => {
+    if (!confirmImport) return;
+    const { file, parsed, fileHash } = confirmImport;
+    setConfirmImport(null);
+    setImporting(true);
+    setMessage(`Uploading ${parsed.length} items...`);
+
+    try {
       const batchSize = 100;
       let inserted = 0;
       for (let i = 0; i < parsed.length; i += batchSize) {
@@ -222,7 +241,6 @@ export default function Home() {
         inserted += batch.length;
       }
 
-      // Save file hash to prevent re-import
       await supabase.from("import_logs").insert({
         file_hash: fileHash,
         file_name: file.name,
@@ -234,11 +252,16 @@ export default function Home() {
       fetchDropdownValues();
       fetchCounts();
     } catch (err) {
-      setMessage(`Error parsing file: ${err instanceof Error ? err.message : err}`);
+      setMessage(`Error importing: ${err instanceof Error ? err.message : err}`);
     }
 
     setImporting(false);
-    // Reset file input
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleCancelImport = () => {
+    setConfirmImport(null);
+    setMessage("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -310,7 +333,7 @@ export default function Home() {
                 ref={fileInputRef}
                 type="file"
                 accept=".xlsx,.xls"
-                onChange={handleImport}
+                onChange={handleFileSelect}
                 disabled={importing}
                 className="hidden"
               />
@@ -326,6 +349,50 @@ export default function Home() {
       </header>
 
       <main className="max-w-[1400px] mx-auto px-6 py-6">
+        {/* Import confirmation modal */}
+        {confirmImport && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4">
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                Confirm Import
+              </h3>
+              <div className="text-sm text-gray-600 space-y-2 mb-5">
+                <p>
+                  File: <strong>{confirmImport.file.name}</strong>
+                </p>
+                <p>
+                  Items found: <strong>{confirmImport.parsed.length}</strong>
+                </p>
+                <p>
+                  With Bid:{" "}
+                  <strong className="text-green-700">
+                    {confirmImport.parsed.filter((l) => l.has_bid).length}
+                  </strong>
+                  {" / "}
+                  No Bid:{" "}
+                  <strong className="text-red-700">
+                    {confirmImport.parsed.filter((l) => !l.has_bid).length}
+                  </strong>
+                </p>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={handleCancelImport}
+                  className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmImport}
+                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+                >
+                  Import
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Status message */}
         {message && (
           <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
