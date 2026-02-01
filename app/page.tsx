@@ -16,8 +16,7 @@ export default function Home() {
   const [listingIdFilter, setListingIdFilter] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
   const [modelFilter, setModelFilter] = useState("");
-  const [yearMin, setYearMin] = useState("");
-  const [yearMax, setYearMax] = useState("");
+  const [yearFilter, setYearFilter] = useState("");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
   const [importDateFilter, setImportDateFilter] = useState("");
@@ -47,6 +46,7 @@ export default function Home() {
   // Unique values for dropdowns
   const [brands, setBrands] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const [years, setYears] = useState<number[]>([]);
   const [importDates, setImportDates] = useState<string[]>([]);
 
   const fetchDropdownValues = useCallback(async () => {
@@ -57,6 +57,15 @@ export default function Home() {
     if (brandData) {
       const unique = [...new Set(brandData.map((r) => r.brand))].sort();
       setBrands(unique);
+    }
+
+    const { data: yearData } = await supabase
+      .from("car_listings")
+      .select("year")
+      .order("year", { ascending: false });
+    if (yearData) {
+      const unique = [...new Set(yearData.map((r) => r.year))].sort((a, b) => b - a);
+      setYears(unique);
     }
 
     const { data: dateData } = await supabase
@@ -88,14 +97,13 @@ export default function Home() {
       if (listingIdFilter) query = query.eq("listing_id", listingIdFilter);
       if (brandFilter) query = query.eq("brand", brandFilter);
       if (modelFilter) query = query.eq("model", modelFilter);
-      if (yearMin) query = query.gte("year", parseInt(yearMin));
-      if (yearMax) query = query.lte("year", parseInt(yearMax));
+      if (yearFilter) query = query.eq("year", parseInt(yearFilter));
       if (priceMin) query = query.gte("price", parseInt(priceMin));
       if (priceMax) query = query.lte("price", parseInt(priceMax));
       if (importDateFilter) query = query.eq("import_date", importDateFilter);
       return query;
     },
-    [listingIdFilter, brandFilter, modelFilter, yearMin, yearMax, priceMin, priceMax, importDateFilter]
+    [listingIdFilter, brandFilter, modelFilter, yearFilter, priceMin, priceMax, importDateFilter]
   );
 
   const fetchCounts = useCallback(async () => {
@@ -307,8 +315,7 @@ export default function Home() {
     setListingIdFilter("");
     setBrandFilter("");
     setModelFilter("");
-    setYearMin("");
-    setYearMax("");
+    setYearFilter("");
     setPriceMin("");
     setPriceMax("");
     setImportDateFilter("");
@@ -411,7 +418,7 @@ export default function Home() {
               Clear all
             </button>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
             {/* Listing ID */}
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">
@@ -474,36 +481,26 @@ export default function Home() {
               </select>
             </div>
 
-            {/* Year Range */}
+            {/* Year */}
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">
-                Year Min
+                Year
               </label>
-              <input
-                type="number"
-                value={yearMin}
+              <select
+                value={yearFilter}
                 onChange={(e) => {
-                  setYearMin(e.target.value);
+                  setYearFilter(e.target.value);
                   setPage(0);
                 }}
-                placeholder="e.g. 2015"
-                className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">
-                Year Max
-              </label>
-              <input
-                type="number"
-                value={yearMax}
-                onChange={(e) => {
-                  setYearMax(e.target.value);
-                  setPage(0);
-                }}
-                placeholder="e.g. 2024"
-                className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm"
-              />
+                className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm bg-white"
+              >
+                <option value="">All</option>
+                {years.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Price Range */}
